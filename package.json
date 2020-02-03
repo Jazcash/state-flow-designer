@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "main": "dist/main.js",
   "scripts": {
-    "start": "webpack-dev-server --host 0.0.0.0"
+    "start": "webpack-dev-server --disable-host-check"
   },
   "dependencies": {
     "@types/node-sass": "^4.11.0",
