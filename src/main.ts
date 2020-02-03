@@ -1,11 +1,6 @@
-import "reset-css/sass/_reset";
-import "./style";
-
 import * as go from "./go-debug";
 
 declare var window: any;
-
-type Category = "Start" | "State" | "Conditional";
 
 const $ = go.GraphObject.make;
 

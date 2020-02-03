@@ -1,15 +1,16 @@
 const path = require('path');
 const HtmlWebpackPlugin = require("html-webpack-plugin");
+const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 
 module.exports = {
     mode: process.env.ENV || 'development',
     devtool: 'inline-source-map',
     entry: {
-        app: './src/main.ts',
+        app: ['./src/main.ts', "./src/style.scss"],
     },
     output: {
-        filename: '[name]-bundle.js',
-        path: path.resolve(__dirname, 'dist')
+        path: path.resolve(__dirname, 'dist'),
+        filename: '[name]-bundle.js'
     },
     module: {
         rules: [
@@ -21,34 +22,27 @@ module.exports = {
                 ]
             },
             {
-                test: /\.scss$/,
+                test: /\.(sa|sc|c)ss$/,
                 use: [
                     {
-                        loader: 'style-loader',
+                        loader: MiniCssExtractPlugin.loader,
                         options: {
-                            insert: 'head',
-                            injectType: 'singletonStyleTag'
+                            hmr: process.env.NODE_ENV === 'development',
                         },
                     },
-                    "css-loader",
-                    "sass-loader"
+                    'css-loader',
+                    'sass-loader',
                 ],
-            },
-            {
-                test: /\.mp3$/,
-                loader: "file-loader",
-                options: {
-                    name: '[path][name].[ext]',
-                },
             }
         ]
     },
-    resolve: {
-        extensions: ['.tsx', '.ts', '.js', ".css", ".scss"]
-    },
     plugins: [
+        new MiniCssExtractPlugin({
+            filename: '[name].css',
+            chunkFilename: '[id].css',
+        }),
         new HtmlWebpackPlugin({
             template: "./src/index.htm"
-        })
+        }),
     ]
 }
