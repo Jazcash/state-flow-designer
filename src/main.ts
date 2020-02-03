@@ -5,12 +5,15 @@ import * as go from "./go-debug";
 
 declare var window: any;
 
+type Category = "Start" | "State" | "Conditional";
+
 const $ = go.GraphObject.make;
 
 const diagram = window.diagram = createDiagram();
 
 const btnLayout = document.getElementById("btnLayout") as HTMLButtonElement;
 const btnState = document.getElementById("btnState") as HTMLButtonElement;
+const btnGen = document.getElementById("btnGen") as HTMLButtonElement;
 const btnSort = document.getElementById("btnSort") as HTMLButtonElement;
 const btnClear = document.getElementById("btnClear") as HTMLButtonElement;
 const stateModal = document.getElementById("stateModal") as HTMLElement;
@@ -21,13 +24,10 @@ const txtState = document.getElementById("txtState") as HTMLTextAreaElement;
 const modelStr = localStorage.getItem("layoutConfig");
 if (modelStr !== null) {
 	const modelObj = JSON.parse(modelStr);
-	diagram.model = $(go.GraphLinksModel, {
-		linkFromPortIdProperty: "fromPort",
-		nodeDataArray: modelObj.nodeDataArray,
-		linkDataArray: modelObj.linkDataArray
-	});
-	updateLayoutConfig();
-	updateStateConfig();
+
+	delete modelObj.class;
+
+	setDiagramByModel(modelObj);
 }
 
 btnLayout.addEventListener("click", () => {
@@ -38,6 +38,12 @@ btnLayout.addEventListener("click", () => {
 btnState.addEventListener("click", () => {
 	layoutModal.classList.add("hidden");
 	stateModal.classList.toggle("hidden");
+});
+
+btnGen.addEventListener("click", () => {
+	const stateConfig:StateConfig.StateConfig = JSON.parse(txtState.value);
+
+	generateDiagramFromStateConfig(stateConfig);
 });
 
 btnSort.addEventListener("click", () => {
@@ -77,7 +83,7 @@ function updateStateConfig() {
 }
 
 function generateStateConfig() {
-	const startNode = diagram.findNodeForKey("Init");
+	const startNode = diagram.nodes.filter(node => node.category === "Start").first();
 
 	if (!startNode) {
 		return {};
@@ -96,7 +102,13 @@ function generateStateConfig() {
 		};
 
 		node.findLinksOutOf().each(link => {
-			state.links[link.fromPortId] = link.toNode!.key;
+			const toNode = link.toNode;
+
+			if (toNode){
+				state.links[link.fromPortId] = toNode.key;
+			} else {
+				
+			}
 		});
 
 		if (node.category === "Start") {
@@ -118,6 +130,50 @@ function generateStateConfig() {
 	return stateConfig;
 }
 
+function generateDiagramFromStateConfig(stateConfig: StateConfig.StateConfig){
+	const model: go.ObjectData = {
+		linkFromPortIdProperty: "fromPort",
+		nodeDataArray: [],
+		linkDataArray: []
+	};
+
+	for (const state of stateConfig.states){
+		model.nodeDataArray.push({
+			category: state.entryPoint ? "Start" : "State",
+			key: state.id
+		});
+	}
+
+	for (const decision of stateConfig.decisions){
+		model.nodeDataArray.push({
+			category: "Conditional",
+			key: decision.id,
+			concrete: decision.concrete
+		});
+	}
+
+	for (const state of stateConfig.states.concat(stateConfig.decisions)){
+		for (const link in state.links){
+			const targetState = state.links[link];
+
+			model.linkDataArray.push({
+				from: state.id,
+				to: targetState,
+				fromPort: link
+			});
+		}
+	}
+
+	setDiagramByModel(model);
+}
+
+function setDiagramByModel(model: go.ObjectData){
+	diagram.model = $(go.GraphLinksModel, model);
+
+	updateStateConfig();
+	updateLayoutConfig();
+}
+
 function createDiagram(): go.Diagram {
 	const diagram = $(go.Diagram, "diagram", {
 		"undoManager.isEnabled": true,
@@ -135,6 +191,44 @@ function createDiagram(): go.Diagram {
 		font: "9pt Lato, Helvetica, Arial, sans-serif",
 		stroke: "#F8F8F8"
 	}
+
+	var portSize = new go.Size(8, 8);
+
+	var portMenu =  // context menu for each port
+		$("ContextMenu",
+			makeButton("Swap order",
+				function (e, obj) { swapOrder(obj.part!.adornments.first()); }),
+			makeButton("Remove port",
+				// in the click event handler, the obj.part is the Adornment;
+				// its adornedObject is the port
+				function (e, obj) { removePort(obj.part!.adornments.first()); }),
+			makeButton("Change color",
+				function (e, obj) { changeColor(obj.part!.adornments.first()); }),
+			makeButton("Remove side ports",
+				function (e, obj) { removeAll(obj.part!.adornments.first()); })
+		);
+
+	var nodeMenu =  // context menu for each Node
+		$("ContextMenu",
+			makeButton("Copy",
+				function (e, obj) { e.diagram.commandHandler.copySelection(); }),
+			makeButton("Delete",
+				function (e, obj) { e.diagram.commandHandler.deleteSelection(); }),
+			$(go.Shape, "LineH", { strokeWidth: 2, height: 1, stretch: go.GraphObject.Horizontal }),
+			makeButton("Add bottom port",
+				function (e, obj) { addPort(go.Spot.Bottom); })
+		);
+
+	diagram.nodeTemplate = $(go.Node, "Table",
+		{
+			locationObjectName: "BODY",
+			locationSpot: go.Spot.Center,
+			selectionObjectName: "BODY",
+			contextMenu: nodeMenu
+		},
+		new go.Binding("location", "loc", go.Point.parse).makeTwoWay(go.Point.stringify),
+
+	)
 
 	diagram.nodeTemplateMap.add("Start",
 		$(go.Node, "Table", nodeStyle(),
@@ -224,6 +318,9 @@ function createDiagram(): go.Diagram {
 
 	diagram.nodeTemplateMap.add("SuperState",
 		$(go.Node, "Table", nodeStyle(),
+		{
+			contextMenu: nodeMenu
+		},
 			$(go.Panel, "Auto",
 				$(go.Shape, "Rectangle", {
 					fill: "#282c34",
@@ -240,9 +337,34 @@ function createDiagram(): go.Diagram {
 				$(go.TextBlock, textStyle1, {
 					margin: 5,
 					editable: true
-				},
-					new go.Binding("text", "key"))
-	)));
+				}, new go.Binding("text", "key")),
+
+				// the Panel holding the bottom port elements, which are themselves Panels,
+				// created for each item in the itemArray, bound to data.bottomArray
+				$(go.Panel, "Horizontal",
+					new go.Binding("itemArray", "bottomArray"),
+					{
+						row: 2, column: 1,
+						itemTemplate:
+							$(go.Panel,
+								{
+									_side: "bottom",
+									contextMenu: portMenu,
+									fromSpot: go.Spot.Bottom, toSpot: go.Spot.Bottom,
+									fromLinkable: true, toLinkable: true, cursor: "pointer"
+								},
+								new go.Binding("portId", "portId"),
+								$(go.Shape, "Rectangle",
+									{
+										stroke: null, strokeWidth: 0,
+										desiredSize: portSize,
+										margin: new go.Margin(0, 1)
+									},
+									new go.Binding("fill", "portColor"))
+							)  // end itemTemplate
+					}
+				)  // end Horizontal Panel
+			)));
 
 	go.Shape.defineFigureGenerator("File", function (shape, w, h) {
 		var geo = new go.Geometry();
@@ -373,7 +495,7 @@ function createDiagram(): go.Diagram {
 		}
 	}
 
-	const palette = $(go.Palette, "palette", {
+	$(go.Palette, "palette", {
 		"animationManager.initialAnimationStyle": go.AnimationManager.None,
 		nodeTemplateMap: diagram.nodeTemplateMap,
 		model: $(go.GraphLinksModel, {
@@ -444,8 +566,122 @@ function createDiagram(): go.Diagram {
 		});
 	}
 
-	function addExitPort(){
+	// To simplify this code we define a function for creating a context menu button:
+	function makeButton(text: string, action: (e: go.InputEvent, obj: go.GraphObject) => void, visiblePredicate?: (obj: go.GraphObject, e: go.InputEvent) => void) {
+		return $("ContextMenuButton",
+			$(go.TextBlock, text),
+			{ click: action },
+			// don't bother with binding GraphObject.visible if there's no predicate
+			visiblePredicate ? new go.Binding("visible", "", function (o, e) { return o.diagram ? visiblePredicate(o, e) : false; }).ofObject() : {});
+	}
 
+
+	// support double-clicking in the background to add a copy of this data as a node
+	diagram.toolManager.clickCreatingTool.archetypeNodeData = {
+		name: "Unit",
+		leftArray: [],
+		rightArray: [],
+		topArray: [],
+		bottomArray: []
+	};
+
+	diagram.contextMenu =
+		$("ContextMenu",
+			makeButton("Paste",
+				function (e, obj) { e.diagram.commandHandler.pasteSelection(e.diagram.toolManager.contextMenuTool.mouseDownPoint); },
+				function (o) { return o.diagram!.commandHandler.canPasteSelection(o.diagram!.toolManager.contextMenuTool.mouseDownPoint); }),
+			makeButton("Undo",
+				function (e, obj) { e.diagram.commandHandler.undo(); },
+				function (o) { return o.diagram!.commandHandler.canUndo(); }),
+			makeButton("Redo",
+				function (e, obj) { e.diagram.commandHandler.redo(); },
+				function (o) { return o.diagram!.commandHandler.canRedo(); })
+		);
+
+	// Add a port to the specified side of the selected nodes.
+	function addPort(side: go.Spot) {
+		diagram.startTransaction("addPort");
+		diagram.selection.each(function (node) {
+			// skip any selected Links
+			if (!(node instanceof go.Node)) return;
+			// compute the next available index number for the side
+			var i = 0;
+			while (node.findPort(side + i.toString()) !== node) i++;
+			// now this new port name is unique within the whole Node because of the side prefix
+			var name = side + i.toString();
+			// get the Array of port data to be modified
+			var arr = node.data[side + "Array"];
+			if (arr) {
+				// create a new port data object
+				var newportdata = {
+					portId: name,
+					portColor: getPortColor()
+					// if you add port data properties here, you should copy them in copyPortData above
+				};
+				// and add it to the Array of port data
+				diagram.model.insertArrayItem(arr, -1, newportdata);
+			}
+		});
+		diagram.commitTransaction("addPort");
+	}
+
+	// Exchange the position/order of the given port with the next one.
+	// If it's the last one, swap with the previous one.
+	function swapOrder(port: any) {
+		var arr = port.panel.itemArray;
+		if (arr.length >= 2) {  // only if there are at least two ports!
+			for (var i = 0; i < arr.length; i++) {
+				if (arr[i].portId === port.portId) {
+					diagram.startTransaction("swap ports");
+					if (i >= arr.length - 1) i--;  // now can swap I and I+1, even if it's the last port
+					var newarr = arr.slice(0);  // copy Array
+					newarr[i] = arr[i + 1];  // swap items
+					newarr[i + 1] = arr[i];
+					// remember the new Array in the model
+					diagram.model.setDataProperty(port.part.data, port._side + "Array", newarr);
+					diagram.commitTransaction("swap ports");
+					break;
+				}
+			}
+		}
+	}
+
+	// Remove the clicked port from the node.
+	// Links to the port will be redrawn to the node's shape.
+	function removePort(port: any) {
+		diagram.startTransaction("removePort");
+		var pid = port.portId;
+		var arr = port.panel.itemArray;
+		for (var i = 0; i < arr.length; i++) {
+			if (arr[i].portId === pid) {
+				diagram.model.removeArrayItem(arr, i);
+				break;
+			}
+		}
+		diagram.commitTransaction("removePort");
+	}
+
+	// Remove all ports from the same side of the node as the clicked port.
+	function removeAll(port: any) {
+		diagram.startTransaction("removePorts");
+		var nodedata = port.part.data;
+		var side = port._side;  // there are four property names, all ending in "Array"
+		diagram.model.setDataProperty(nodedata, side + "Array", []);  // an empty Array
+		diagram.commitTransaction("removePorts");
+	}
+
+	// Change the color of the clicked port.
+	function changeColor(port: any) {
+		diagram.startTransaction("colorPort");
+		var data = port.data;
+		diagram.model.setDataProperty(data, "portColor", getPortColor());
+		diagram.commitTransaction("colorPort");
+	}
+
+	// Use some pastel colors for ports
+	function getPortColor() {
+		var portColors = ["#fae3d7", "#d6effc", "#ebe3fc", "#eaeef8", "#fadfe5", "#6cafdb", "#66d6d1"]
+		return portColors[Math.floor(Math.random() * portColors.length)];
 	}
 
 	// diagram.toolManager.linkingTool.linkValidation = function (fromnode, fromport, tonode, toport) {
