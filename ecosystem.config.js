@@ -1,7 +1,7 @@
 module.exports = {
     apps: [{
         name: "state-flow-designer",
-        script: "./npm start",
+        script: "npm start",
         env: {
             NODE_ENV: "development",
         },
