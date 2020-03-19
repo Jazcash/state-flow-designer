@@ -96,6 +96,10 @@ function generateStateConfig() {
 			links: {}
 		};
 
+		if (node.category === "Conditional") {
+			state.concrete = node.data.concrete;
+		}
+
 		node.findLinksOutOf().each(link => {
 			const toNode = link.toNode;
 
